@@ -17,24 +17,103 @@ jobs:
           flutter-version: '3.22.2'
           channel: 'stable'
 
+      - name: Fix project structure for indivisible upload
+        run: |
+          echo "=== Before Fix ==="
+          ls -la
+          echo ""
+          
+          # 1. pubspec.yaml check - agar nahi hai to banayenge
+          if [ ! -f "pubspec.yaml" ]; then
+            echo "pubspec.yaml missing, searching..."
+            FOUND_PUB=$(find . -name "pubspec.yaml" | head -n 1)
+            if [ -n "$FOUND_PUB" ]; then
+              echo "Found at $FOUND_PUB"
+              cp "$FOUND_PUB" ./pubspec.yaml
+            else
+              echo "Creating basic pubspec.yaml"
+              cat > pubspec.yaml << 'EOF'
+          name: scan_12345678
+          description: Sca-N App
+          publish_to: 'none'
+          version: 1.0.0+1
+          environment:
+            sdk: '>=3.0.0 <4.0.0'
+          dependencies:
+            flutter:
+              sdk: flutter
+            cupertino_icons: ^1.0.2
+            provider: ^6.1.1
+            shared_preferences: ^2.2.2
+          flutter:
+            uses-material-design: true
+          EOF
+            fi
+          fi
+          
+          # 2. lib folder banao
+          mkdir -p lib
+          
+          # 3. main.dart dhoondho - jo bhi file main() rakhti hai
+          echo "Searching for main entry..."
+          MAIN_FILE=$(grep -l "void main" *.dart 2>/dev/null | head -n 1)
+          if [ -z "$MAIN_FILE" ]; then
+            MAIN_FILE=$(grep -l "void main" **/*.dart 2>/dev/null | head -n 1)
+          fi
+          echo "Main file found: $MAIN_FILE"
+          
+          # 4. Saare dart files jo root me hain unko lib me copy karo
+          echo "Moving dart files to lib/"
+          for f in *.dart; do
+            if [ -f "$f" ]; then
+              echo "Moving $f -> lib/"
+              cp "$f" lib/ 2>/dev/null || true
+            fi
+          done
+          
+          # 5. Ensure lib/main.dart exists
+          if [ ! -f "lib/main.dart" ]; then
+            if [ -n "$MAIN_FILE" ] && [ -f "$MAIN_FILE" ]; then
+              cp "$MAIN_FILE" lib/main.dart
+              echo "Created lib/main.dart from $MAIN_FILE"
+            elif [ -f "lib/app.dart" ]; then
+              cp lib/app.dart lib/main.dart
+              echo "Created lib/main.dart from app.dart"
+            else
+              # First dart file ko main banao
+              FIRST=$(ls lib/*.dart 2>/dev/null | head -n 1)
+              if [ -n "$FIRST" ]; then
+                cp "$FIRST" lib/main.dart
+                echo "Created lib/main.dart from $FIRST"
+              fi
+            fi
+          fi
+          
+          # 6. Duplicate _1, _2 wali files hatao agar original hai
+          cd lib
+          for base in $(ls *.dart | sed 's/_[0-9].dart/.dart/' | sed 's/_[0-9]_[0-9].dart/.dart/' | sort -u); do
+            if [ -f "$base" ]; then
+              echo "Keeping $base, removing duplicates"
+              rm -f "${base%.dart}_*.dart" 2>/dev/null || true
+            fi
+          done
+          cd ..
+          
+          echo "=== After Fix ==="
+          ls -la lib/ | head -n 50
+          cat pubspec.yaml
+
       - name: Build APK
         run: |
-          echo "Listing files"
-          ls -la
-          echo "Finding pubspec.yaml"
-          find . -name "pubspec.yaml"
-          PUB=$(find . -name "pubspec.yaml" | head -n 1)
-          echo "Found at $PUB"
-          DIR=$(dirname "$PUB")
-          echo "Dir is $DIR"
-          cd "$DIR"
+          if [ ! -d "android" ]; then
+            echo "Creating android folder..."
+            flutter create . --platforms=android
+          fi
           flutter pub get
-          flutter build apk --debug
+          flutter build apk --debug --verbose
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Sca-N-APK
-          path: |
-            **/build/app/outputs/flutter-apk/*.apk
-            **/build/app/outputs/flutter-apk/app-debug.apk
+          path: "**/build/app/outputs/flutter-apk/*.apk"
